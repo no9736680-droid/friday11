@@ -1,0 +1,54 @@
+name: Build FRIDAY EXE
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Upgrade pip
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+
+      - name: Install dependencies
+        run: |
+          pip install -e .
+
+      - name: Install PyInstaller
+        run: |
+          pip install pyinstaller
+
+      - name: Build FRIDAY Voice EXE
+        run: |
+          pyinstaller --clean --noconfirm --onefile --name FRIDAY-Voice agent_friday.py
+
+      - name: Build FRIDAY Server EXE
+        run: |
+          pyinstaller --clean --noconfirm --onefile --name FRIDAY-Server server.py
+
+      - name: Create release folder
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path release
+          Copy-Item dist\FRIDAY-Voice.exe release\
+          Copy-Item dist\FRIDAY-Server.exe release\
+          Copy-Item README.md release\ -ErrorAction SilentlyContinue
+
+      - name: Upload EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: FRIDAY-Windows-EXE
+          path: release\
