@@ -6,49 +6,257 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
 jobs:
   build:
+    name: Build Windows EXE
     runs-on: windows-latest
 
     steps:
-      - name: Checkout
+
+      # --------------------------------------------------
+      # 1. Download repository
+      # --------------------------------------------------
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Python
+
+      # --------------------------------------------------
+      # 2. Install Python
+      # --------------------------------------------------
+      - name: Setup Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: "pip"
 
+
+      # --------------------------------------------------
+      # 3. Find the actual FRIDAY project folder
+      # --------------------------------------------------
+      - name: Find project folder
+        shell: powershell
+        run: |
+          Write-Host "Searching for pyproject.toml..."
+
+          $files = Get-ChildItem `
+            -Path $env:GITHUB_WORKSPACE `
+            -Filter "pyproject.toml" `
+            -Recurse `
+            -File
+
+          if ($files.Count -eq 0) {
+            Write-Error "ERROR: pyproject.toml was not found anywhere in the repository."
+            exit 1
+          }
+
+          if ($files.Count -gt 1) {
+            Write-Host "Multiple pyproject.toml files found:"
+            $files | ForEach-Object {
+              Write-Host $_.FullName
+            }
+
+            # Use the first one
+            $project = $files[0]
+          }
+          else {
+            $project = $files[0]
+          }
+
+          $projectDir = $project.Directory.FullName
+
+          Write-Host ""
+          Write-Host "======================================"
+          Write-Host "FRIDAY PROJECT DIRECTORY:"
+          Write-Host $projectDir
+          Write-Host "======================================"
+          Write-Host ""
+
+          "PROJECT_DIR=$projectDir" >> $env:GITHUB_ENV
+
+
+      # --------------------------------------------------
+      # 4. Show project files
+      # --------------------------------------------------
+      - name: Verify project files
+        shell: powershell
+        run: |
+          Write-Host "Project directory:"
+          Write-Host $env:PROJECT_DIR
+          Write-Host ""
+
+          Write-Host "Project files:"
+          Get-ChildItem -Path $env:PROJECT_DIR -Force
+
+          Write-Host ""
+
+          if (!(Test-Path "$env:PROJECT_DIR\pyproject.toml")) {
+            Write-Error "pyproject.toml is missing."
+            exit 1
+          }
+
+          if (!(Test-Path "$env:PROJECT_DIR\agent_friday.py")) {
+            Write-Error "agent_friday.py is missing."
+            exit 1
+          }
+
+          if (!(Test-Path "$env:PROJECT_DIR\server.py")) {
+            Write-Error "server.py is missing."
+            exit 1
+          }
+
+          Write-Host "Required FRIDAY files found successfully."
+
+
+      # --------------------------------------------------
+      # 5. Upgrade Python build tools
+      # --------------------------------------------------
       - name: Upgrade pip
+        shell: powershell
         run: |
           python -m pip install --upgrade pip setuptools wheel
 
-      - name: Install dependencies
-        run: |
-          pip install -e .
 
-      - name: Install PyInstaller
-        run: |
-          pip install pyinstaller
-
-      - name: Build FRIDAY Voice EXE
-        run: |
-          pyinstaller --clean --noconfirm --onefile --name FRIDAY-Voice agent_friday.py
-
-      - name: Build FRIDAY Server EXE
-        run: |
-          pyinstaller --clean --noconfirm --onefile --name FRIDAY-Server server.py
-
-      - name: Create release folder
+      # --------------------------------------------------
+      # 6. Install FRIDAY dependencies
+      # --------------------------------------------------
+      - name: Install FRIDAY dependencies
         shell: powershell
         run: |
-          New-Item -ItemType Directory -Force -Path release
-          Copy-Item dist\FRIDAY-Voice.exe release\
-          Copy-Item dist\FRIDAY-Server.exe release\
-          Copy-Item README.md release\ -ErrorAction SilentlyContinue
+          Set-Location "$env:PROJECT_DIR"
 
-      - name: Upload EXE
+          Write-Host "Installing FRIDAY project..."
+          Write-Host "Current directory:"
+          Get-Location
+
+          Write-Host ""
+          Write-Host "Installing from pyproject.toml..."
+
+          python -m pip install -e .
+
+
+      # --------------------------------------------------
+      # 7. Install PyInstaller
+      # --------------------------------------------------
+      - name: Install PyInstaller
+        shell: powershell
+        run: |
+          python -m pip install --upgrade pyinstaller
+
+
+      # --------------------------------------------------
+      # 8. Check PyInstaller
+      # --------------------------------------------------
+      - name: Verify PyInstaller
+        shell: powershell
+        run: |
+          python -m PyInstaller --version
+
+
+      # --------------------------------------------------
+      # 9. Build FRIDAY Voice EXE
+      # --------------------------------------------------
+      - name: Build FRIDAY Voice EXE
+        shell: powershell
+        run: |
+          Set-Location "$env:PROJECT_DIR"
+
+          Write-Host "Building FRIDAY Voice..."
+
+          python -m PyInstaller `
+            --clean `
+            --noconfirm `
+            --onefile `
+            --name "FRIDAY-Voice" `
+            "agent_friday.py"
+
+          if (!(Test-Path "dist\FRIDAY-Voice.exe")) {
+            Write-Error "FRIDAY-Voice.exe was not created."
+            exit 1
+          }
+
+          Write-Host "FRIDAY-Voice.exe created successfully."
+
+
+      # --------------------------------------------------
+      # 10. Build FRIDAY Server EXE
+      # --------------------------------------------------
+      - name: Build FRIDAY Server EXE
+        shell: powershell
+        run: |
+          Set-Location "$env:PROJECT_DIR"
+
+          Write-Host "Building FRIDAY Server..."
+
+          python -m PyInstaller `
+            --clean `
+            --noconfirm `
+            --onefile `
+            --name "FRIDAY-Server" `
+            "server.py"
+
+          if (!(Test-Path "dist\FRIDAY-Server.exe")) {
+            Write-Error "FRIDAY-Server.exe was not created."
+            exit 1
+          }
+
+          Write-Host "FRIDAY-Server.exe created successfully."
+
+
+      # --------------------------------------------------
+      # 11. Create release folder
+      # --------------------------------------------------
+      - name: Prepare release files
+        shell: powershell
+        run: |
+          Set-Location "$env:PROJECT_DIR"
+
+          $release = Join-Path $env:GITHUB_WORKSPACE "release"
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path $release | Out-Null
+
+          Copy-Item `
+            "dist\FRIDAY-Voice.exe" `
+            "$release\FRIDAY-Voice.exe"
+
+          Copy-Item `
+            "dist\FRIDAY-Server.exe" `
+            "$release\FRIDAY-Server.exe"
+
+          if (Test-Path "README.md") {
+            Copy-Item `
+              "README.md" `
+              "$release\README.md"
+          }
+
+          if (Test-Path ".env.example") {
+            Copy-Item `
+              ".env.example" `
+              "$release\.env.example"
+          }
+
+          Write-Host ""
+          Write-Host "======================================"
+          Write-Host "RELEASE FILES"
+          Write-Host "======================================"
+
+          Get-ChildItem `
+            -Path $release `
+            -Force
+
+
+      # --------------------------------------------------
+      # 12. Upload EXEs to GitHub Actions
+      # --------------------------------------------------
+      - name: Upload FRIDAY Windows EXEs
         uses: actions/upload-artifact@v4
         with:
           name: FRIDAY-Windows-EXE
-          path: release\
+          path: release
+          if-no-files-found: error
+          retention-days: 30
